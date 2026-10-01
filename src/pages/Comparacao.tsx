@@ -1,14 +1,21 @@
 import { ArrowRight, Droplets, Filter, CheckCircle2 } from 'lucide-react';
 
-export default function Comparacao() {
-  // Dados estáticos baseados no protótipo Figma para demonstração
-  const dadosComparativos = [
-    { parametro: 'pH', antes: '7.8', depois: '7.2', alturaAntes: '80%', alturaDepois: '70%' },
-    { parametro: 'Turbidez', antes: '45 NTU', depois: '14 NTU', alturaAntes: '95%', alturaDepois: '30%' },
-    { parametro: 'Temperatura', antes: '25.8°C', depois: '24.5°C', alturaAntes: '75%', alturaDepois: '70%' },
-    { parametro: 'TDS', antes: '320 ppm', depois: '210 ppm', alturaAntes: '85%', alturaDepois: '55%' }
-  ];
+interface DadoComparativo {
+  parametro: string;
+  antes: string;
+  depois: string;
+  alturaAntes: string;
+  alturaDepois: string;
+}
 
+const DADOS_COMPARATIVOS: DadoComparativo[] = [
+  { parametro: 'pH', antes: '7.8', depois: '7.2', alturaAntes: '90%', alturaDepois: '83%' },
+  { parametro: 'Turbidez', antes: '7 NTU', depois: '1.2 NTU', alturaAntes: '90%', alturaDepois: '15.4%' },
+  { parametro: 'Temperatura', antes: '25.8°C', depois: '24.5°C', alturaAntes: '90%', alturaDepois: '85.5%' },
+  { parametro: 'TDS', antes: '320 ppm', depois: '210 ppm', alturaAntes: '90%', alturaDepois: '59%' }
+];
+
+export default function Comparacao() {
   return (
     <div>
       <div className="comparacao-header">
@@ -22,14 +29,14 @@ export default function Comparacao() {
 
         <div className="fluxo-etapas">
           <div className="etapa-item">
-            <Droplets size={24} className="text-gray-500" />
+            <Droplets size={24} style={{ color: 'var(--text-light)' }} />
             <span>Água Bruta</span>
           </div>
 
           <ArrowRight className="etapa-seta" size={20} />
 
           <div className="etapa-item">
-            <Filter size={24} className="text-gray-500" />
+            <Filter size={24} style={{ color: 'var(--text-light)' }} />
             <span>Filtro</span>
           </div>
 
@@ -43,15 +50,15 @@ export default function Comparacao() {
       </div>
 
       <div className="metricas-grid">
-        {dadosComparativos.map((item, index) => (
-          <div className="metrica-card" key={index}>
+        {DADOS_COMPARATIVOS.map((item) => (
+          <div className="metrica-card" key={item.parametro}>
             <div className="metrica-titulo">{item.parametro}</div>
             <div className="metrica-valores">
               <div className="valor-bloco">
                 <span className="valor-rotulo">Antes</span>
                 <span className="valor-num">{item.antes}</span>
               </div>
-              <div className="valor-bloco" style={{ textAlign: 'right' }}>
+              <div className="valor-bloco text-right">
                 <span className="valor-rotulo">Depois</span>
                 <span className="valor-num depois">{item.depois}</span>
               </div>
@@ -63,27 +70,27 @@ export default function Comparacao() {
       <div className="grafico-card">
         <div className="grafico-header">
           <div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Comparativo de qualidade</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-light)' }}>
+            <h3 className="text-lg font-semibold text-[var(--text-main)]">Comparativo de qualidade</h3>
+            <p className="text-sm text-[var(--text-light)]">
               Valores medidos no último ciclo de tratamento
             </p>
           </div>
 
           <div className="legenda-container">
             <div className="legenda-item">
-              <div className="legenda-cor antes"></div>
+              <div className="legenda-cor antes" />
               <span>Antes</span>
             </div>
             <div className="legenda-item">
-              <div className="legenda-cor depois"></div>
+              <div className="legenda-cor depois" />
               <span>Depois</span>
             </div>
           </div>
         </div>
 
         <div className="barras-container">
-          {dadosComparativos.map((item, index) => (
-            <div className="grupo-barra" key={index}>
+          {DADOS_COMPARATIVOS.map((item) => (
+            <div className="grupo-barra" key={item.parametro}>
               <div className="par-barras">
                 <div 
                   className="barra antes" 
