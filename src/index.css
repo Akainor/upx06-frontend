@@ -205,3 +205,210 @@ body {
   color: var(--text-main);
   font-size: 0.95rem;
 }
+
+/* --- Página Antes x Depois --- */
+.comparacao-header {
+  margin-bottom: 28px;
+}
+
+.comparacao-header h2 {
+  font-size: 1.875rem;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.comparacao-header p {
+  color: var(--text-light);
+  font-size: 1rem;
+}
+
+/* Card do Fluxo de Tratamento */
+.fluxo-card {
+  background-color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 28px;
+}
+
+.fluxo-card h3 {
+  font-size: 1.125rem;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.fluxo-card p {
+  color: var(--text-light);
+  font-size: 0.875rem;
+  margin-bottom: 20px;
+}
+
+.fluxo-etapas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.etapa-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  border-radius: 10px;
+  background-color: var(--bg-color);
+  border: 1px solid var(--border-color);
+  min-width: 140px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.etapa-item.destaque {
+  background-color: var(--primary-light);
+  border-color: #a7f3d0;
+  color: var(--primary-dark);
+}
+
+.etapa-seta {
+  color: var(--text-light);
+}
+
+/* Métricas em Linha */
+.metricas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.metrica-card {
+  background-color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.metrica-titulo {
+  font-size: 0.875rem;
+  color: var(--text-light);
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+.metrica-valores {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.valor-bloco {
+  display: flex;
+  flex-direction: column;
+}
+
+.valor-rotulo {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.valor-num {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.valor-num.depois {
+  color: var(--primary-color);
+}
+
+/* Gráfico Comparativo em Barras */
+.grafico-card {
+  background-color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.grafico-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.legenda-container {
+  display: flex;
+  gap: 16px;
+  font-size: 0.875rem;
+}
+
+.legenda-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-light);
+}
+
+.legenda-cor {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.legenda-cor.antes {
+  background-color: #94a3b8;
+}
+
+.legenda-cor.depois {
+  background-color: var(--primary-color);
+}
+
+.barras-container {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  height: 200px;
+  align-items: flex-end;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.grupo-barra {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.par-barras {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 100%;
+}
+
+.barra {
+  width: 24px;
+  border-radius: 4px 4px 0 0;
+  transition: height 0.3s ease;
+}
+
+.barra.antes {
+  background-color: #94a3b8;
+}
+
+.barra.depois {
+  background-color: var(--primary-color);
+}
+
+.parametro-rotulo {
+  margin-top: 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
