@@ -212,20 +212,31 @@ function interpretarTimestamp(timestamp: string): Date {
   return new Date(temFusoHorario ? timestamp : `${timestamp}Z`);
 }
 
-function getStatusMetric(metric: MetricEvaluationResult | undefined): StatusCor {
+function getStatusMetric(metric: MetricEvaluationResult | undefined, atributo: AtributoId): StatusCor {
   if (!metric) return 'vermelho';
   if (!metric.evaluator.isEnabled) return 'amarelo';
+
+  if (atributo === 'ph') {
+    if (metric.value < 6.5 || metric.value > 9.5) return 'vermelho';
+    if (metric.value <= 7 || metric.value >= 9) return 'amarelo';
+    return 'verde';
+  }
+
+  if (atributo === 'turbidez') {
+    if (metric.value < 0 || metric.value > 1) return 'vermelho';
+    return metric.value >= 0.5 ? 'amarelo' : 'verde';
+  }
+
+  if (atributo === 'tds') {
+    if (metric.value < 0 || metric.value > 600) return 'vermelho';
+    return metric.value >= 500 ? 'amarelo' : 'verde';
+  }
+
   return metric.isSuccessful ? 'verde' : 'vermelho';
 }
 
-function getStatusGeral(quality: SampleQuality | undefined): StatusCor {
-  if (!quality) return 'amarelo';
-  return quality === 'ProperForConsumption' ? 'verde' : 'vermelho';
-}
-
-function getStatusLabel(quality: SampleQuality | undefined): string {
-  if (!quality) return 'SEM AVALIAÇÃO';
-  return quality === 'ProperForConsumption' ? 'NORMAL' : 'ALERTA CRÍTICO';
+function formatarLimite(valor: number): string {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(valor);
 }
 
 export default function Dashboard() {
@@ -433,22 +444,26 @@ export default function Dashboard() {
     }
 
     return {
-      ph: getStatusMetric(metricas.phEvaluationResult),
-      turbidez: getStatusMetric(metricas.turbidityEvaluationResult),
-      temp: getStatusMetric(metricas.temperatureEvaluationResult),
-      tds: getStatusMetric(metricas.tdsEvaluationResult),
+      ph: getStatusMetric(metricas.phEvaluationResult, 'ph'),
+      turbidez: getStatusMetric(metricas.turbidityEvaluationResult, 'turbidez'),
+      temp: getStatusMetric(metricas.temperatureEvaluationResult, 'temp'),
+      tds: getStatusMetric(metricas.tdsEvaluationResult, 'tds'),
     };
   }, [dadosDashboard]);
 
-  const statusGeral = useMemo(() => {
-    if (!dadosDashboard?.latestSampleEvaluation) return 'amarelo';
-    return getStatusGeral(dadosDashboard.latestSampleEvaluation.quality);
-  }, [dadosDashboard]);
+  const statusGeral = useMemo<StatusCor>(() => {
+    const statusDosAtributos = Object.values(statusPorAtributo);
+    if (statusDosAtributos.includes('vermelho')) return 'vermelho';
+    if (statusDosAtributos.includes('amarelo')) return 'amarelo';
+    return 'verde';
+  }, [statusPorAtributo]);
 
   const textoStatusGeral = useMemo(() => {
     if (!dadosDashboard?.latestSampleEvaluation) return 'SEM AVALIAÇÃO';
-    return getStatusLabel(dadosDashboard.latestSampleEvaluation.quality);
-  }, [dadosDashboard]);
+    if (statusGeral === 'vermelho') return 'ALERTA CRÍTICO';
+    if (statusGeral === 'amarelo') return 'ATENÇÃO';
+    return 'NORMAL';
+  }, [dadosDashboard, statusGeral]);
 
   const listaAtributos = useMemo(() => {
     const avaliacao = dadosDashboard?.latestSampleEvaluation;
@@ -463,32 +478,32 @@ export default function Dashboard() {
         nome: 'pH',
         valor: Number(avaliacao.phEvaluationResult.value),
         unidade: '',
-        limites: `Limite: ${avaliacao.phEvaluationResult.evaluator.lowerBound} - ${avaliacao.phEvaluationResult.evaluator.upperBound}`,
-        status: getStatusMetric(avaliacao.phEvaluationResult),
+        limites: 'Limite: 6,5 - 9,5',
+        status: getStatusMetric(avaliacao.phEvaluationResult, 'ph'),
       },
       {
         id: 'turbidez' as const,
         nome: 'Turbidez',
         valor: Number(avaliacao.turbidityEvaluationResult.value),
         unidade: ' NTU',
-        limites: `Limite: ${avaliacao.turbidityEvaluationResult.evaluator.lowerBound} - ${avaliacao.turbidityEvaluationResult.evaluator.upperBound} NTU`,
-        status: getStatusMetric(avaliacao.turbidityEvaluationResult),
+        limites: 'Limite: 0 - 1 NTU',
+        status: getStatusMetric(avaliacao.turbidityEvaluationResult, 'turbidez'),
       },
       {
         id: 'temp' as const,
         nome: 'Temperatura',
         valor: Number(avaliacao.temperatureEvaluationResult.value),
         unidade: '°C',
-        limites: `Limite: ${avaliacao.temperatureEvaluationResult.evaluator.lowerBound} - ${avaliacao.temperatureEvaluationResult.evaluator.upperBound}°C`,
-        status: getStatusMetric(avaliacao.temperatureEvaluationResult),
+        limites: `Limite: ${formatarLimite(avaliacao.temperatureEvaluationResult.evaluator.lowerBound)} - ${formatarLimite(avaliacao.temperatureEvaluationResult.evaluator.upperBound)}°C`,
+        status: getStatusMetric(avaliacao.temperatureEvaluationResult, 'temp'),
       },
       {
         id: 'tds' as const,
         nome: 'TDS',
         valor: Number(avaliacao.tdsEvaluationResult.value),
         unidade: ' mg/L',
-        limites: `Limite: ${avaliacao.tdsEvaluationResult.evaluator.lowerBound} - ${avaliacao.tdsEvaluationResult.evaluator.upperBound} mg/L`,
-        status: getStatusMetric(avaliacao.tdsEvaluationResult),
+        limites: 'Limite: 0 - 600 mg/L',
+        status: getStatusMetric(avaliacao.tdsEvaluationResult, 'tds'),
       },
     ];
   }, [dadosDashboard]);
