@@ -460,6 +460,34 @@ body {
   gap: 16px;
 }
 
+.dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dashboard-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--primary-border);
+  border-radius: 8px;
+  background-color: var(--primary-light);
+  color: var(--primary-dark);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dashboard-refresh-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .dashboard-title-area h2 {
   font-size: 1.875rem;
   color: var(--text-main);
