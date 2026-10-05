@@ -8,6 +8,8 @@ import {
 } from '../utils/alertNotifications';
 import {
   acquireDashboardRequestLock,
+  getLastDashboardRequestAt,
+  recordDashboardRequestSuccess,
   releaseDashboardRequestLock,
 } from '../utils/dashboardRequestLock';
 
@@ -46,6 +48,15 @@ export default function Layout() {
     let proximaVerificacao = 0;
     let verificacaoEmAndamento = false;
 
+    function agendarVerificacao(timestamp: number) {
+      proximaVerificacao = timestamp;
+      window.clearTimeout(temporizador);
+      temporizador = window.setTimeout(
+        () => void verificarAlertas(),
+        Math.max(0, timestamp - Date.now()),
+      );
+    }
+
     async function verificarAlertas() {
       if (
         !ativo
@@ -56,13 +67,34 @@ export default function Layout() {
         return;
       }
 
+      try {
+        const proximaBuscaPermitida = getLastDashboardRequestAt() + INTERVALO_MONITORAMENTO_MS;
+        if (Date.now() < proximaBuscaPermitida) {
+          agendarVerificacao(proximaBuscaPermitida);
+          return;
+        }
+      } catch (error) {
+        setErroMonitoramento(
+          error instanceof Error ? error.message : 'Não foi possível ler o horário da última consulta.',
+        );
+        agendarVerificacao(Date.now() + INTERVALO_MONITORAMENTO_MS);
+        return;
+      }
+
       verificacaoEmAndamento = true;
       temporizador = undefined;
+      let consultaConcluida = false;
+
+      if (pathnameRef.current === '/dashboard') {
+        verificacaoEmAndamento = false;
+        agendarVerificacao(Date.now() + INTERVALO_MONITORAMENTO_MS);
+        return;
+      }
 
       if (pathnameRef.current !== '/dashboard') {
         let lock: string | null;
         try {
-          lock = acquireDashboardRequestLock();
+          lock = await acquireDashboardRequestLock();
         } catch (error) {
           setErroMonitoramento(
             error instanceof Error ? error.message : 'Não foi possível iniciar a verificação de alertas.',
@@ -71,10 +103,7 @@ export default function Layout() {
         }
         if (!lock) {
           verificacaoEmAndamento = false;
-          proximaVerificacao = Date.now() + INTERVALO_MONITORAMENTO_MS;
-          temporizador = window.setTimeout(() => {
-            void verificarAlertas();
-          }, INTERVALO_MONITORAMENTO_MS);
+          agendarVerificacao(Date.now() + INTERVALO_MONITORAMENTO_MS);
           return;
         }
 
@@ -90,9 +119,24 @@ export default function Layout() {
           }
 
           const dados: unknown = await resposta.json();
+          consultaConcluida = true;
           if (!ativo || controladorAtivo !== controlador) return;
-          processDashboardAlertCheck(dados, true);
-          setErroMonitoramento(null);
+          let erroConsulta: string | null = null;
+          try {
+            recordDashboardRequestSuccess(Date.now());
+          } catch (error) {
+            erroConsulta = error instanceof Error
+              ? `A consulta foi concluída, mas não foi possível registrar seu horário: ${error.message}`
+              : 'A consulta foi concluída, mas não foi possível registrar seu horário.';
+          }
+          try {
+            processDashboardAlertCheck(dados, true);
+          } catch (error) {
+            erroConsulta = error instanceof Error
+              ? `A consulta foi concluída, mas não foi possível processar as notificações: ${error.message}`
+              : 'A consulta foi concluída, mas não foi possível processar as notificações.';
+          }
+          setErroMonitoramento(erroConsulta);
         } catch (error) {
           if (
             ativo
@@ -120,10 +164,30 @@ export default function Layout() {
       verificacaoEmAndamento = false;
       if (!ativo) return;
 
-      proximaVerificacao = Date.now() + INTERVALO_MONITORAMENTO_MS;
-      temporizador = window.setTimeout(() => {
-        void verificarAlertas();
-      }, INTERVALO_MONITORAMENTO_MS);
+      let proximaBuscaPermitida: number;
+      if (!consultaConcluida) {
+        proximaBuscaPermitida = Date.now() + INTERVALO_MONITORAMENTO_MS;
+      } else {
+        try {
+          proximaBuscaPermitida = getLastDashboardRequestAt() + INTERVALO_MONITORAMENTO_MS;
+        } catch {
+          proximaBuscaPermitida = Date.now() + INTERVALO_MONITORAMENTO_MS;
+        }
+      }
+      agendarVerificacao(Math.max(Date.now(), proximaBuscaPermitida));
+    }
+
+    function sincronizarHorarioConsulta(event: StorageEvent) {
+      if (event.key !== 'upx06-dashboard-last-successful-request-v1' || verificacaoEmAndamento) return;
+
+      try {
+        const proximaBuscaPermitida = getLastDashboardRequestAt() + INTERVALO_MONITORAMENTO_MS;
+        agendarVerificacao(Math.max(Date.now(), proximaBuscaPermitida));
+      } catch (error) {
+        setErroMonitoramento(
+          error instanceof Error ? error.message : 'Não foi possível sincronizar o horário da última consulta.',
+        );
+      }
     }
 
     function retomarVerificacao() {
@@ -141,6 +205,7 @@ export default function Layout() {
     }
 
     document.addEventListener('visibilitychange', retomarVerificacao);
+    window.addEventListener('storage', sincronizarHorarioConsulta);
     if (document.visibilityState === 'visible') {
       void verificarAlertas();
     } else {
@@ -150,6 +215,7 @@ export default function Layout() {
     return () => {
       ativo = false;
       document.removeEventListener('visibilitychange', retomarVerificacao);
+      window.removeEventListener('storage', sincronizarHorarioConsulta);
       window.clearTimeout(temporizador);
       controladorAtivo?.abort();
     };

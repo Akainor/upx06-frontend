@@ -4,7 +4,9 @@ import { processDashboardAlertCheck } from '../utils/alertNotifications';
 import {
   acquireDashboardRequestLock,
   getManualSearchCooldownRemaining,
+  getLastDashboardRequestAt,
   isManualSearchCooldownStorageKey,
+  recordDashboardRequestSuccess,
   releaseDashboardRequestLock,
   startManualSearchCooldown,
 } from '../utils/dashboardRequestLock';
@@ -285,7 +287,7 @@ export default function Dashboard() {
 
     let lock: string | null;
     try {
-      lock = acquireDashboardRequestLock();
+      lock = await acquireDashboardRequestLock();
     } catch (error) {
       setErro(error instanceof Error ? error.message : 'Não foi possível iniciar a consulta da dashboard.');
       return;
@@ -322,7 +324,6 @@ export default function Dashboard() {
 
       const horarioConsulta = new Date().toISOString();
       const timestampConsulta = new Date(horarioConsulta).getTime();
-      processDashboardAlertCheck(dados, automatico, timestampConsulta);
       const temLeituras = dados.latestSampleEvaluation !== null || dados.samples.length > 0;
       const dadosRecebidos = temLeituras ? dados : dadosDashboardRef.current ?? dados;
       const dadosPersistidos = {
@@ -348,20 +349,39 @@ export default function Dashboard() {
       setInstanteAtual(timestampConsulta);
       setSnapshotsConsultas(novosSnapshots);
 
+      const errosPersistencia: string[] = [];
       try {
         localStorage.setItem(CHAVE_CACHE_DASHBOARD, JSON.stringify({
           data: dadosPersistidos,
           snapshots: novosSnapshots,
           updatedAt: timestampConsulta,
         } satisfies DashboardCache));
-        setErro(temLeituras
+      } catch {
+        errosPersistencia.push('Os dados foram atualizados, mas não foi possível salvá-los neste navegador.');
+      }
+      try {
+        recordDashboardRequestSuccess(timestampConsulta);
+      } catch {
+        errosPersistencia.push('Não foi possível registrar o horário da consulta neste navegador.');
+      }
+      const erroPersistencia = errosPersistencia.length > 0 ? errosPersistencia.join(' ') : null;
+
+      let erroAlertas: string | null = null;
+      try {
+        processDashboardAlertCheck(dados, automatico, timestampConsulta);
+      } catch (error) {
+        erroAlertas = error instanceof Error
+          ? `Os dados foram atualizados, mas não foi possível processar as notificações: ${error.message}`
+          : 'Os dados foram atualizados, mas não foi possível processar as notificações.';
+      }
+
+      setErro(erroAlertas
+        ?? erroPersistencia
+        ?? (temLeituras
           ? null
           : haviaDadosAnteriores
             ? 'A API não retornou leituras novas; mantendo os últimos dados disponíveis.'
-            : 'A API respondeu, mas ainda não há leituras disponíveis.');
-      } catch {
-        setErro('Os dados foram atualizados, mas não foi possível salvá-los neste navegador.');
-      }
+            : 'A API respondeu, mas ainda não há leituras disponíveis.'));
     } catch (error) {
       if (
         componenteAtivoRef.current
@@ -408,8 +428,25 @@ export default function Dashboard() {
   useEffect(() => {
     componenteAtivoRef.current = true;
     let temporizador: number | undefined;
+    let temporizadorErroConsulta: number | undefined;
     let proximaBuscaAutomatica = 0;
     let buscaAutomaticaEmAndamento = false;
+    let erroHorarioReportado = false;
+
+    function lerUltimaConsultaCompartilhada(): number {
+      try {
+        return getLastDashboardRequestAt();
+      } catch (error) {
+        if (!erroHorarioReportado) {
+          erroHorarioReportado = true;
+          const mensagem = error instanceof Error
+            ? error.message
+            : 'Não foi possível ler o horário da última consulta.';
+          temporizadorErroConsulta = window.setTimeout(() => setErro(mensagem), 0);
+        }
+        return 0;
+      }
+    }
 
     async function buscarAutomaticamente() {
       if (
@@ -423,6 +460,7 @@ export default function Dashboard() {
       const proximaBuscaPermitida = Math.max(
         proximaBuscaAutomatica,
         ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
+        lerUltimaConsultaCompartilhada() + INTERVALO_ATUALIZACAO_MS,
       );
       const esperaRestante = proximaBuscaPermitida - Date.now();
       if (esperaRestante > 0) {
@@ -452,6 +490,7 @@ export default function Dashboard() {
       const proximaBuscaPermitida = Math.max(
         proximaBuscaAutomatica,
         ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
+        lerUltimaConsultaCompartilhada() + INTERVALO_ATUALIZACAO_MS,
       );
       if (
         document.visibilityState !== 'visible'
@@ -495,6 +534,42 @@ export default function Dashboard() {
     }
 
     window.addEventListener('storage', sincronizarCache);
+    function sincronizarHorarioConsulta(event: StorageEvent) {
+      if (event.key === 'upx06-dashboard-last-successful-request-v1') {
+        try {
+          ultimaConsultaBemSucedidaRef.current = Math.max(
+            ultimaConsultaBemSucedidaRef.current,
+            lerUltimaConsultaCompartilhada(),
+          );
+          const proximaBuscaPermitida = Math.max(
+            proximaBuscaAutomatica,
+            ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
+          );
+          proximaBuscaAutomatica = proximaBuscaPermitida;
+          window.clearTimeout(temporizador);
+          if (document.visibilityState === 'visible') {
+            temporizador = window.setTimeout(
+              () => void buscarAutomaticamente(),
+              Math.max(0, proximaBuscaPermitida - Date.now()),
+            );
+          }
+        } catch (error) {
+          setErro(error instanceof Error ? error.message : 'Não foi possível sincronizar o horário da última consulta.');
+        }
+      }
+    }
+    window.addEventListener('storage', sincronizarHorarioConsulta);
+    try {
+      ultimaConsultaBemSucedidaRef.current = Math.max(
+        ultimaConsultaBemSucedidaRef.current,
+        getLastDashboardRequestAt(),
+      );
+    } catch (error) {
+      const mensagem = error instanceof Error
+        ? error.message
+        : 'Não foi possível ler o horário da última consulta.';
+      temporizadorErroConsulta = window.setTimeout(() => setErro(mensagem), 0);
+    }
     proximaBuscaAutomatica = ultimaConsultaBemSucedidaRef.current > 0
       ? ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS
       : Date.now();
@@ -510,7 +585,9 @@ export default function Dashboard() {
       componenteAtivoRef.current = false;
       document.removeEventListener('visibilitychange', retomarBuscaAutomatica);
       window.removeEventListener('storage', sincronizarCache);
+      window.removeEventListener('storage', sincronizarHorarioConsulta);
       window.clearTimeout(temporizador);
+      window.clearTimeout(temporizadorErroConsulta);
       const controlador = controladorRef.current;
       controladorRef.current = null;
       requisicaoAtivaRef.current = false;
