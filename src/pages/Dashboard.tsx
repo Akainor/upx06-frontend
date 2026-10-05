@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { processDashboardAlertCheck } from '../utils/alertNotifications';
+import {
+  acquireDashboardRequestLock,
+  getManualSearchCooldownRemaining,
+  isManualSearchCooldownStorageKey,
+  releaseDashboardRequestLock,
+  startManualSearchCooldown,
+} from '../utils/dashboardRequestLock';
 
 type StatusCor = 'verde' | 'amarelo' | 'vermelho';
 type AtributoId = 'ph' | 'turbidez' | 'temp' | 'tds';
@@ -179,6 +186,7 @@ const formatadorHora = new Intl.DateTimeFormat('pt-BR', {
   timeZone: TIME_ZONE_BRASILIA,
   hour: '2-digit',
   minute: '2-digit',
+  second: '2-digit',
   hourCycle: 'h23',
 });
 const formatadorDataHora = new Intl.DateTimeFormat('pt-BR', {
@@ -242,13 +250,27 @@ function formatarLimite(valor: number): string {
 
 export default function Dashboard() {
   const [cacheInicial] = useState(carregarCacheDashboard);
+  const [cooldownInicial] = useState(() => {
+    try {
+      return {
+        seconds: Math.ceil(getManualSearchCooldownRemaining() / 1000),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        seconds: 0,
+        error: error instanceof Error ? error.message : 'Não foi possível ler o tempo de espera da busca manual.',
+      };
+    }
+  });
   const [dadosDashboard, setDadosDashboard] = useState<DashboardScreenData | null>(cacheInicial.cache?.data ?? null);
-  const [erro, setErro] = useState<string | null>(cacheInicial.error);
+  const [erro, setErro] = useState<string | null>(cacheInicial.error ?? cooldownInicial.error);
   const [instanteAtualizacao, setInstanteAtualizacao] = useState(cacheInicial.cache?.updatedAt ?? 0);
+  const ultimaConsultaBemSucedidaRef = useRef(cacheInicial.cache?.updatedAt ?? 0);
   const [instanteAtual, setInstanteAtual] = useState(Date.now);
   const [snapshotsConsultas, setSnapshotsConsultas] = useState<Sample[]>(cacheInicial.cache?.snapshots ?? []);
   const [consultando, setConsultando] = useState(false);
-  const [segundosAteBuscaManual, setSegundosAteBuscaManual] = useState(0);
+  const [segundosAteBuscaManual, setSegundosAteBuscaManual] = useState(cooldownInicial.seconds);
   const [atributoGrafico, setAtributoGrafico] = useState<AtributoId>('ph');
   const [dimensoesGrafico, setDimensoesGrafico] = useState({ width: 1000, height: 280 });
   const containerGraficoRef = useRef<HTMLDivElement>(null);
@@ -257,10 +279,21 @@ export default function Dashboard() {
   const requisicaoAtivaRef = useRef(false);
   const controladorRef = useRef<AbortController | null>(null);
   const componenteAtivoRef = useRef(true);
-  const buscaManualBloqueadaAteRef = useRef(0);
 
-  const carregarDados = useCallback(async (automatico: boolean) => {
+  const carregarDados = useCallback(async (automatico: boolean, aoIniciar?: () => void) => {
     if (requisicaoAtivaRef.current) return;
+
+    let lock: string | null;
+    try {
+      lock = acquireDashboardRequestLock();
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : 'Não foi possível iniciar a consulta da dashboard.');
+      return;
+    }
+    if (!lock) {
+      setErro('Outra aba já está consultando os valores da dashboard.');
+      return;
+    }
 
     requisicaoAtivaRef.current = true;
     const controlador = new AbortController();
@@ -269,6 +302,7 @@ export default function Dashboard() {
     setErro(null);
 
     try {
+      aoIniciar?.();
       const resposta = await fetch(`${API_URL}/Screens/Dashboard`, {
         signal: controlador.signal,
         headers: {
@@ -308,8 +342,10 @@ export default function Dashboard() {
 
       dadosDashboardRef.current = dadosPersistidos;
       snapshotsConsultasRef.current = novosSnapshots;
+      ultimaConsultaBemSucedidaRef.current = timestampConsulta;
       setDadosDashboard(dadosPersistidos);
       setInstanteAtualizacao(timestampConsulta);
+      setInstanteAtual(timestampConsulta);
       setSnapshotsConsultas(novosSnapshots);
 
       try {
@@ -340,26 +376,141 @@ export default function Dashboard() {
         controladorRef.current = null;
         setConsultando(false);
       }
+      try {
+        releaseDashboardRequestLock(lock);
+      } catch (error) {
+        if (componenteAtivoRef.current) {
+          setErro(error instanceof Error ? error.message : 'Não foi possível liberar a consulta da dashboard.');
+        }
+      }
     }
   }, []);
 
   const buscarManualmente = useCallback(() => {
-    if (requisicaoAtivaRef.current || Date.now() < buscaManualBloqueadaAteRef.current) return;
+    if (requisicaoAtivaRef.current) return;
 
-    buscaManualBloqueadaAteRef.current = Date.now() + INTERVALO_BUSCA_MANUAL_MS;
-    setSegundosAteBuscaManual(INTERVALO_BUSCA_MANUAL_MS / 1000);
-    void carregarDados(false);
+    try {
+      const restante = getManualSearchCooldownRemaining();
+      if (restante > 0) {
+        setSegundosAteBuscaManual(Math.ceil(restante / 1000));
+        return;
+      }
+
+      void carregarDados(false, () => {
+        startManualSearchCooldown();
+        setSegundosAteBuscaManual(INTERVALO_BUSCA_MANUAL_MS / 1000);
+      });
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : 'Não foi possível iniciar a busca manual.');
+    }
   }, [carregarDados]);
 
   useEffect(() => {
     componenteAtivoRef.current = true;
-    void carregarDados(true);
-    const intervalo = window.setInterval(() => {
-      void carregarDados(true);
-    }, INTERVALO_ATUALIZACAO_MS);
+    let temporizador: number | undefined;
+    let proximaBuscaAutomatica = 0;
+    let buscaAutomaticaEmAndamento = false;
+
+    async function buscarAutomaticamente() {
+      if (
+        !componenteAtivoRef.current
+        || document.visibilityState !== 'visible'
+        || buscaAutomaticaEmAndamento
+      ) {
+        return;
+      }
+
+      const proximaBuscaPermitida = Math.max(
+        proximaBuscaAutomatica,
+        ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
+      );
+      const esperaRestante = proximaBuscaPermitida - Date.now();
+      if (esperaRestante > 0) {
+        proximaBuscaAutomatica = proximaBuscaPermitida;
+        temporizador = window.setTimeout(() => {
+          void buscarAutomaticamente();
+        }, esperaRestante);
+        return;
+      }
+
+      buscaAutomaticaEmAndamento = true;
+      temporizador = undefined;
+      try {
+        await carregarDados(true);
+      } finally {
+        buscaAutomaticaEmAndamento = false;
+        if (componenteAtivoRef.current) {
+          proximaBuscaAutomatica = Date.now() + INTERVALO_ATUALIZACAO_MS;
+          temporizador = window.setTimeout(() => {
+            void buscarAutomaticamente();
+          }, INTERVALO_ATUALIZACAO_MS);
+        }
+      }
+    }
+
+    function retomarBuscaAutomatica() {
+      const proximaBuscaPermitida = Math.max(
+        proximaBuscaAutomatica,
+        ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
+      );
+      if (
+        document.visibilityState !== 'visible'
+        || buscaAutomaticaEmAndamento
+        || Date.now() < proximaBuscaPermitida
+      ) {
+        return;
+      }
+
+      window.clearTimeout(temporizador);
+      void buscarAutomaticamente();
+    }
+
+    document.addEventListener('visibilitychange', retomarBuscaAutomatica);
+    function sincronizarCache(event: StorageEvent) {
+      if (event.key !== CHAVE_CACHE_DASHBOARD || !event.newValue) return;
+
+      let cache: unknown;
+      try {
+        cache = JSON.parse(event.newValue);
+      } catch {
+        setErro('Os dados atualizados em outra aba estão inválidos.');
+        return;
+      }
+
+      if (!isDashboardCache(cache)) {
+        setErro('Os dados atualizados em outra aba estão inválidos.');
+        return;
+      }
+
+      if (cache.updatedAt <= ultimaConsultaBemSucedidaRef.current) return;
+
+      ultimaConsultaBemSucedidaRef.current = cache.updatedAt;
+      dadosDashboardRef.current = cache.data;
+      snapshotsConsultasRef.current = cache.snapshots;
+      setDadosDashboard(cache.data);
+      setSnapshotsConsultas(cache.snapshots);
+      setInstanteAtualizacao(cache.updatedAt);
+      setInstanteAtual(cache.updatedAt);
+      setErro(null);
+    }
+
+    window.addEventListener('storage', sincronizarCache);
+    proximaBuscaAutomatica = ultimaConsultaBemSucedidaRef.current > 0
+      ? ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS
+      : Date.now();
+
+    if (document.visibilityState === 'visible') {
+      const esperaInicial = Math.max(0, proximaBuscaAutomatica - Date.now());
+      temporizador = window.setTimeout(() => {
+        void buscarAutomaticamente();
+      }, esperaInicial);
+    }
+
     return () => {
       componenteAtivoRef.current = false;
-      window.clearInterval(intervalo);
+      document.removeEventListener('visibilitychange', retomarBuscaAutomatica);
+      window.removeEventListener('storage', sincronizarCache);
+      window.clearTimeout(temporizador);
       const controlador = controladorRef.current;
       controladorRef.current = null;
       requisicaoAtivaRef.current = false;
@@ -371,17 +522,30 @@ export default function Dashboard() {
     if (segundosAteBuscaManual === 0) return;
 
     const temporizador = window.setTimeout(() => {
-      const segundosRestantes = Math.ceil(
-        (buscaManualBloqueadaAteRef.current - Date.now()) / 1000,
-      );
-      setSegundosAteBuscaManual(Math.max(0, segundosRestantes));
-      if (segundosRestantes <= 0) {
-        buscaManualBloqueadaAteRef.current = 0;
+      try {
+        setSegundosAteBuscaManual(Math.ceil(getManualSearchCooldownRemaining() / 1000));
+      } catch (error) {
+        setErro(error instanceof Error ? error.message : 'Não foi possível verificar o tempo de espera.');
       }
     }, 1000);
 
     return () => window.clearTimeout(temporizador);
   }, [segundosAteBuscaManual]);
+
+  useEffect(() => {
+    function atualizarCooldown(event: StorageEvent) {
+      if (!isManualSearchCooldownStorageKey(event.key)) return;
+
+      try {
+        setSegundosAteBuscaManual(Math.ceil(getManualSearchCooldownRemaining() / 1000));
+      } catch (error) {
+        setErro(error instanceof Error ? error.message : 'Não foi possível verificar o tempo de espera.');
+      }
+    }
+
+    window.addEventListener('storage', atualizarCooldown);
+    return () => window.removeEventListener('storage', atualizarCooldown);
+  }, []);
 
   useEffect(() => {
     const temporizador = window.setInterval(() => {

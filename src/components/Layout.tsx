@@ -6,6 +6,10 @@ import {
   processDashboardAlertCheck,
   subscribeToAlerts,
 } from '../utils/alertNotifications';
+import {
+  acquireDashboardRequestLock,
+  releaseDashboardRequestLock,
+} from '../utils/dashboardRequestLock';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5058';
 const INTERVALO_MONITORAMENTO_MS = 15 * 60 * 1000;
@@ -38,50 +42,115 @@ export default function Layout() {
   useEffect(() => {
     let ativo = true;
     let controladorAtivo: AbortController | null = null;
+    let temporizador: number | undefined;
+    let proximaVerificacao = 0;
+    let verificacaoEmAndamento = false;
 
     async function verificarAlertas() {
-      if (!ativo || controladorAtivo || pathnameRef.current === '/dashboard') return;
-
-      const controlador = new AbortController();
-      controladorAtivo = controlador;
-      try {
-        const resposta = await fetch(`${API_URL}/Screens/Dashboard`, {
-          signal: controlador.signal,
-          headers: { Accept: 'application/json' },
-        });
-        if (!resposta.ok) {
-          throw new Error(`Falha ao verificar alertas (${resposta.status}).`);
-        }
-
-        const dados: unknown = await resposta.json();
-        if (!ativo || controladorAtivo !== controlador) return;
-        processDashboardAlertCheck(dados, true);
-        setErroMonitoramento(null);
-      } catch (error) {
-        if (
-          ativo
-          && controladorAtivo === controlador
-          && (error as Error).name !== 'AbortError'
-        ) {
-          setErroMonitoramento(
-            error instanceof Error ? error.message : 'Não foi possível verificar os alertas.',
-          );
-        }
-      } finally {
-        if (controladorAtivo === controlador) controladorAtivo = null;
+      if (
+        !ativo
+        || controladorAtivo
+        || verificacaoEmAndamento
+        || document.visibilityState !== 'visible'
+      ) {
+        return;
       }
+
+      verificacaoEmAndamento = true;
+      temporizador = undefined;
+
+      if (pathnameRef.current !== '/dashboard') {
+        let lock: string | null;
+        try {
+          lock = acquireDashboardRequestLock();
+        } catch (error) {
+          setErroMonitoramento(
+            error instanceof Error ? error.message : 'Não foi possível iniciar a verificação de alertas.',
+          );
+          lock = null;
+        }
+        if (!lock) {
+          verificacaoEmAndamento = false;
+          proximaVerificacao = Date.now() + INTERVALO_MONITORAMENTO_MS;
+          temporizador = window.setTimeout(() => {
+            void verificarAlertas();
+          }, INTERVALO_MONITORAMENTO_MS);
+          return;
+        }
+
+        const controlador = new AbortController();
+        controladorAtivo = controlador;
+        try {
+          const resposta = await fetch(`${API_URL}/Screens/Dashboard`, {
+            signal: controlador.signal,
+            headers: { Accept: 'application/json' },
+          });
+          if (!resposta.ok) {
+            throw new Error(`Falha ao verificar alertas (${resposta.status}).`);
+          }
+
+          const dados: unknown = await resposta.json();
+          if (!ativo || controladorAtivo !== controlador) return;
+          processDashboardAlertCheck(dados, true);
+          setErroMonitoramento(null);
+        } catch (error) {
+          if (
+            ativo
+            && controladorAtivo === controlador
+            && (error as Error).name !== 'AbortError'
+          ) {
+            setErroMonitoramento(
+              error instanceof Error ? error.message : 'Não foi possível verificar os alertas.',
+            );
+          }
+        } finally {
+          if (controladorAtivo === controlador) controladorAtivo = null;
+          try {
+            releaseDashboardRequestLock(lock);
+          } catch (error) {
+            if (ativo) {
+              setErroMonitoramento(
+                error instanceof Error ? error.message : 'Não foi possível liberar a verificação de alertas.',
+              );
+            }
+          }
+        }
+      }
+
+      verificacaoEmAndamento = false;
+      if (!ativo) return;
+
+      proximaVerificacao = Date.now() + INTERVALO_MONITORAMENTO_MS;
+      temporizador = window.setTimeout(() => {
+        void verificarAlertas();
+      }, INTERVALO_MONITORAMENTO_MS);
     }
 
-    if (pathnameRef.current !== '/dashboard') {
+    function retomarVerificacao() {
+      if (
+        document.visibilityState !== 'visible'
+        || verificacaoEmAndamento
+        || proximaVerificacao === 0
+        || Date.now() < proximaVerificacao
+      ) {
+        return;
+      }
+
+      window.clearTimeout(temporizador);
       void verificarAlertas();
     }
-    const intervalo = window.setInterval(() => {
+
+    document.addEventListener('visibilitychange', retomarVerificacao);
+    if (document.visibilityState === 'visible') {
       void verificarAlertas();
-    }, INTERVALO_MONITORAMENTO_MS);
+    } else {
+      proximaVerificacao = Date.now();
+    }
 
     return () => {
       ativo = false;
-      window.clearInterval(intervalo);
+      document.removeEventListener('visibilitychange', retomarVerificacao);
+      window.clearTimeout(temporizador);
       controladorAtivo?.abort();
     };
   }, []);
