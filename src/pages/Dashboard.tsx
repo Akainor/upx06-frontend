@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { processDashboardAlertCheck } from '../utils/alertNotifications';
+import { getMetricStatus, type MetricAttribute, type MetricStatus } from '../utils/metricStatus';
 import {
   acquireDashboardRequestLock,
   getManualSearchCooldownRemaining,
@@ -11,8 +12,8 @@ import {
   startManualSearchCooldown,
 } from '../utils/dashboardRequestLock';
 
-type StatusCor = 'verde' | 'amarelo' | 'vermelho';
-type AtributoId = 'ph' | 'turbidez' | 'temp' | 'tds';
+type StatusCor = MetricStatus;
+type AtributoId = MetricAttribute;
 type SampleQuality = 'ProperForConsumption' | 'ImproperForConsumption';
 type SampleSourcingPoint = 'AfterFiltration' | 'BeforeFiltration';
 
@@ -221,29 +222,6 @@ function calcularLarguraGrafico(quantidadePontos: number, larguraDisponivel: num
 function interpretarTimestamp(timestamp: string): Date {
   const temFusoHorario = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp);
   return new Date(temFusoHorario ? timestamp : `${timestamp}Z`);
-}
-
-function getStatusMetric(metric: MetricEvaluationResult | undefined, atributo: AtributoId): StatusCor {
-  if (!metric) return 'vermelho';
-  if (!metric.evaluator.isEnabled) return 'amarelo';
-
-  if (atributo === 'ph') {
-    if (metric.value < 6.5 || metric.value > 9.5) return 'vermelho';
-    if (metric.value <= 7 || metric.value >= 9) return 'amarelo';
-    return 'verde';
-  }
-
-  if (atributo === 'turbidez') {
-    if (metric.value < 0 || metric.value > 1) return 'vermelho';
-    return metric.value >= 0.5 ? 'amarelo' : 'verde';
-  }
-
-  if (atributo === 'tds') {
-    if (metric.value < 0 || metric.value > 600) return 'vermelho';
-    return metric.value >= 500 ? 'amarelo' : 'verde';
-  }
-
-  return metric.isSuccessful ? 'verde' : 'vermelho';
 }
 
 function formatarLimite(valor: number): string {
@@ -687,10 +665,10 @@ export default function Dashboard() {
     }
 
     return {
-      ph: getStatusMetric(metricas.phEvaluationResult, 'ph'),
-      turbidez: getStatusMetric(metricas.turbidityEvaluationResult, 'turbidez'),
-      temp: getStatusMetric(metricas.temperatureEvaluationResult, 'temp'),
-      tds: getStatusMetric(metricas.tdsEvaluationResult, 'tds'),
+      ph: getMetricStatus(metricas.phEvaluationResult, 'ph'),
+      turbidez: getMetricStatus(metricas.turbidityEvaluationResult, 'turbidez'),
+      temp: getMetricStatus(metricas.temperatureEvaluationResult, 'temp'),
+      tds: getMetricStatus(metricas.tdsEvaluationResult, 'tds'),
     };
   }, [dadosDashboard]);
 
@@ -722,7 +700,7 @@ export default function Dashboard() {
         valor: Number(avaliacao.phEvaluationResult.value),
         unidade: '',
         limites: 'Limite: 6,5 - 9,5',
-        status: getStatusMetric(avaliacao.phEvaluationResult, 'ph'),
+        status: getMetricStatus(avaliacao.phEvaluationResult, 'ph'),
       },
       {
         id: 'turbidez' as const,
@@ -730,7 +708,7 @@ export default function Dashboard() {
         valor: Number(avaliacao.turbidityEvaluationResult.value),
         unidade: ' NTU',
         limites: 'Limite: 0 - 1 NTU',
-        status: getStatusMetric(avaliacao.turbidityEvaluationResult, 'turbidez'),
+        status: getMetricStatus(avaliacao.turbidityEvaluationResult, 'turbidez'),
       },
       {
         id: 'temp' as const,
@@ -738,7 +716,7 @@ export default function Dashboard() {
         valor: Number(avaliacao.temperatureEvaluationResult.value),
         unidade: '°C',
         limites: `Limite: ${formatarLimite(avaliacao.temperatureEvaluationResult.evaluator.lowerBound)} - ${formatarLimite(avaliacao.temperatureEvaluationResult.evaluator.upperBound)}°C`,
-        status: getStatusMetric(avaliacao.temperatureEvaluationResult, 'temp'),
+        status: getMetricStatus(avaliacao.temperatureEvaluationResult, 'temp'),
       },
       {
         id: 'tds' as const,
@@ -746,7 +724,7 @@ export default function Dashboard() {
         valor: Number(avaliacao.tdsEvaluationResult.value),
         unidade: ' mg/L',
         limites: 'Limite: 0 - 600 mg/L',
-        status: getStatusMetric(avaliacao.tdsEvaluationResult, 'tds'),
+        status: getMetricStatus(avaliacao.tdsEvaluationResult, 'tds'),
       },
     ];
   }, [dadosDashboard]);
