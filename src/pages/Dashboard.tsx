@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
+import { processDashboardAlertCheck } from '../utils/alertNotifications';
 
 type StatusCor = 'verde' | 'amarelo' | 'vermelho';
 type AtributoId = 'ph' | 'turbidez' | 'temp' | 'tds';
@@ -258,7 +259,7 @@ export default function Dashboard() {
   const componenteAtivoRef = useRef(true);
   const buscaManualBloqueadaAteRef = useRef(0);
 
-  const carregarDados = useCallback(async () => {
+  const carregarDados = useCallback(async (automatico: boolean) => {
     if (requisicaoAtivaRef.current) return;
 
     requisicaoAtivaRef.current = true;
@@ -287,6 +288,7 @@ export default function Dashboard() {
 
       const horarioConsulta = new Date().toISOString();
       const timestampConsulta = new Date(horarioConsulta).getTime();
+      processDashboardAlertCheck(dados, automatico, timestampConsulta);
       const temLeituras = dados.latestSampleEvaluation !== null || dados.samples.length > 0;
       const dadosRecebidos = temLeituras ? dados : dadosDashboardRef.current ?? dados;
       const dadosPersistidos = {
@@ -346,14 +348,14 @@ export default function Dashboard() {
 
     buscaManualBloqueadaAteRef.current = Date.now() + INTERVALO_BUSCA_MANUAL_MS;
     setSegundosAteBuscaManual(INTERVALO_BUSCA_MANUAL_MS / 1000);
-    void carregarDados();
+    void carregarDados(false);
   }, [carregarDados]);
 
   useEffect(() => {
     componenteAtivoRef.current = true;
-    void carregarDados();
+    void carregarDados(true);
     const intervalo = window.setInterval(() => {
-      void carregarDados();
+      void carregarDados(true);
     }, INTERVALO_ATUALIZACAO_MS);
     return () => {
       componenteAtivoRef.current = false;

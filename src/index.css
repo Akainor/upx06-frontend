@@ -134,6 +134,29 @@ body {
   height: 20px;
 }
 
+.nav-alert-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background-color: #ef4444;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.nav-alert-error {
+  width: 9px;
+  height: 9px;
+  margin-left: auto;
+  border-radius: 50%;
+  background-color: #ef4444;
+}
+
 /* Conteúdo Principal */
 .main-content {
   flex: 1;
@@ -496,6 +519,117 @@ body {
 .dashboard-refresh-btn:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.alertas-page {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.alertas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.alertas-header h1 {
+  margin-bottom: 6px;
+  color: var(--text-main);
+  font-size: 1.875rem;
+}
+
+.alertas-header p,
+.alerta-content time {
+  color: var(--text-light);
+  font-size: 0.875rem;
+}
+
+.alertas-count {
+  color: var(--text-light);
+  font-size: 0.875rem;
+}
+
+.alertas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+}
+
+.alerta-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-color);
+  border-left-width: 5px;
+  border-radius: 10px;
+  background-color: #ffffff;
+}
+
+.alerta-item.vermelho {
+  border-left-color: #ef4444;
+}
+
+.alerta-item.amarelo {
+  border-left-color: #f59e0b;
+}
+
+.alerta-item.unread {
+  background-color: #ffffff;
+}
+
+.alerta-item.read {
+  opacity: 0.78;
+}
+
+.alerta-item.vermelho .alerta-icon {
+  color: #dc2626;
+}
+
+.alerta-item.amarelo .alerta-icon {
+  color: #d97706;
+}
+
+.alerta-content {
+  flex: 1;
+}
+
+.alerta-content p {
+  margin-bottom: 6px;
+  color: var(--text-main);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.alerta-new-label {
+  padding: 4px 8px;
+  border-radius: 9999px;
+  background-color: #fee2e2;
+  color: #b91c1c;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.alertas-empty {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  color: var(--text-light);
+}
+
+.alertas-error {
+  margin-bottom: 16px;
+  color: #b91c1c;
 }
 
 .dashboard-title-area h2 {
