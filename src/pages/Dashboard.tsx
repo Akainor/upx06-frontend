@@ -54,6 +54,16 @@ interface DashboardCacheLoad {
 }
 
 const CHAVE_CACHE_DASHBOARD = 'upx06-dashboard-cache-v1';
+const JANELA_GRAFICO_MS = 24 * 60 * 60 * 1000;
+
+function filtrarUltimas24Horas(amostras: Sample[], instante: number): Sample[] {
+  const limite = instante - JANELA_GRAFICO_MS;
+
+  return amostras.filter((amostra) => {
+    const timestamp = interpretarTimestamp(amostra.timestamp).getTime();
+    return Number.isFinite(timestamp) && timestamp >= limite && timestamp <= instante;
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -118,7 +128,22 @@ function carregarCacheDashboard(): DashboardCacheLoad {
       return { cache: null, error: 'Os dados salvos da dashboard estão inválidos; faça uma nova consulta.' };
     }
 
-    return { cache, error: null };
+    const agora = Date.now();
+    const amostras = filtrarUltimas24Horas(cache.data.samples, agora);
+    const snapshots = filtrarUltimas24Horas(cache.snapshots, agora);
+    const cacheAtualizado = {
+      ...cache,
+      data: { ...cache.data, samples: amostras },
+      snapshots,
+    };
+    const cacheFoiLimpo = amostras.length !== cache.data.samples.length
+      || snapshots.length !== cache.snapshots.length;
+
+    if (cacheFoiLimpo) {
+      localStorage.setItem(CHAVE_CACHE_DASHBOARD, JSON.stringify(cacheAtualizado));
+    }
+
+    return { cache: cacheAtualizado, error: null };
   } catch {
     return { cache: null, error: 'Não foi possível ler os dados salvos da dashboard neste navegador.' };
   }
@@ -147,7 +172,7 @@ function criarSnapshotConsulta(dados: DashboardScreenData, timestamp: string): S
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5058';
 const INTERVALO_ATUALIZACAO_MS = 15 * 60 * 1000;
-const JANELA_GRAFICO_MS = 24 * 60 * 60 * 1000;
+const INTERVALO_BUSCA_MANUAL_MS = 60 * 1000;
 const TIME_ZONE_BRASILIA = 'America/Sao_Paulo';
 const formatadorHora = new Intl.DateTimeFormat('pt-BR', {
   timeZone: TIME_ZONE_BRASILIA,
@@ -178,6 +203,10 @@ function formatarValor(valor: number, casasDecimais = 1): string {
   return valor.toFixed(casasDecimais);
 }
 
+function calcularLarguraGrafico(quantidadePontos: number, larguraDisponivel: number): number {
+  return Math.max(larguraDisponivel, 1000, (quantidadePontos - 1) * 70 + 80);
+}
+
 function interpretarTimestamp(timestamp: string): Date {
   const temFusoHorario = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp);
   return new Date(temFusoHorario ? timestamp : `${timestamp}Z`);
@@ -204,14 +233,19 @@ export default function Dashboard() {
   const [dadosDashboard, setDadosDashboard] = useState<DashboardScreenData | null>(cacheInicial.cache?.data ?? null);
   const [erro, setErro] = useState<string | null>(cacheInicial.error);
   const [instanteAtualizacao, setInstanteAtualizacao] = useState(cacheInicial.cache?.updatedAt ?? 0);
+  const [instanteAtual, setInstanteAtual] = useState(Date.now);
   const [snapshotsConsultas, setSnapshotsConsultas] = useState<Sample[]>(cacheInicial.cache?.snapshots ?? []);
   const [consultando, setConsultando] = useState(false);
+  const [segundosAteBuscaManual, setSegundosAteBuscaManual] = useState(0);
   const [atributoGrafico, setAtributoGrafico] = useState<AtributoId>('ph');
+  const [dimensoesGrafico, setDimensoesGrafico] = useState({ width: 1000, height: 280 });
+  const containerGraficoRef = useRef<HTMLDivElement>(null);
   const dadosDashboardRef = useRef(dadosDashboard);
   const snapshotsConsultasRef = useRef(snapshotsConsultas);
   const requisicaoAtivaRef = useRef(false);
   const controladorRef = useRef<AbortController | null>(null);
   const componenteAtivoRef = useRef(true);
+  const buscaManualBloqueadaAteRef = useRef(0);
 
   const carregarDados = useCallback(async () => {
     if (requisicaoAtivaRef.current) return;
@@ -235,7 +269,7 @@ export default function Dashboard() {
       }
 
       const dados: unknown = await resposta.json();
-      if (!componenteAtivoRef.current) return;
+      if (!componenteAtivoRef.current || controladorRef.current !== controlador) return;
       if (!isDashboardScreenData(dados)) {
         throw new Error('A API retornou dados em um formato inválido.');
       }
@@ -243,13 +277,14 @@ export default function Dashboard() {
       const horarioConsulta = new Date().toISOString();
       const timestampConsulta = new Date(horarioConsulta).getTime();
       const temLeituras = dados.latestSampleEvaluation !== null || dados.samples.length > 0;
-      const dadosPersistidos = temLeituras ? dados : dadosDashboardRef.current ?? dados;
+      const dadosRecebidos = temLeituras ? dados : dadosDashboardRef.current ?? dados;
+      const dadosPersistidos = {
+        ...dadosRecebidos,
+        samples: filtrarUltimas24Horas(dadosRecebidos.samples, timestampConsulta),
+      };
       const snapshot = criarSnapshotConsulta(dados, horarioConsulta);
-      const limiteHistorico = timestampConsulta - JANELA_GRAFICO_MS;
       const novosSnapshots = [
-        ...snapshotsConsultasRef.current.filter(
-          (amostra) => interpretarTimestamp(amostra.timestamp).getTime() >= limiteHistorico,
-        ),
+        ...filtrarUltimas24Horas(snapshotsConsultasRef.current, timestampConsulta),
         ...(snapshot ? [snapshot] : []),
       ];
       const haviaDadosAnteriores = dadosDashboardRef.current !== null
@@ -279,29 +314,116 @@ export default function Dashboard() {
         setErro('Os dados foram atualizados, mas não foi possível salvá-los neste navegador.');
       }
     } catch (error) {
-      if (componenteAtivoRef.current && (error as Error).name !== 'AbortError') {
+      if (
+        componenteAtivoRef.current
+        && controladorRef.current === controlador
+        && (error as Error).name !== 'AbortError'
+      ) {
         setErro(error instanceof Error ? error.message : 'Não foi possível carregar os dados da dashboard.');
       }
     } finally {
-      requisicaoAtivaRef.current = false;
-      controladorRef.current = null;
-      if (componenteAtivoRef.current) {
+      if (controladorRef.current === controlador) {
+        requisicaoAtivaRef.current = false;
+        controladorRef.current = null;
         setConsultando(false);
       }
     }
   }, []);
 
+  const buscarManualmente = useCallback(() => {
+    if (requisicaoAtivaRef.current || Date.now() < buscaManualBloqueadaAteRef.current) return;
+
+    buscaManualBloqueadaAteRef.current = Date.now() + INTERVALO_BUSCA_MANUAL_MS;
+    setSegundosAteBuscaManual(INTERVALO_BUSCA_MANUAL_MS / 1000);
+    void carregarDados();
+  }, [carregarDados]);
+
   useEffect(() => {
     componenteAtivoRef.current = true;
+    void carregarDados();
     const intervalo = window.setInterval(() => {
       void carregarDados();
     }, INTERVALO_ATUALIZACAO_MS);
     return () => {
       componenteAtivoRef.current = false;
       window.clearInterval(intervalo);
-      controladorRef.current?.abort();
+      const controlador = controladorRef.current;
+      controladorRef.current = null;
+      requisicaoAtivaRef.current = false;
+      controlador?.abort();
     };
   }, [carregarDados]);
+
+  useEffect(() => {
+    if (segundosAteBuscaManual === 0) return;
+
+    const temporizador = window.setTimeout(() => {
+      const segundosRestantes = Math.ceil(
+        (buscaManualBloqueadaAteRef.current - Date.now()) / 1000,
+      );
+      setSegundosAteBuscaManual(Math.max(0, segundosRestantes));
+      if (segundosRestantes <= 0) {
+        buscaManualBloqueadaAteRef.current = 0;
+      }
+    }, 1000);
+
+    return () => window.clearTimeout(temporizador);
+  }, [segundosAteBuscaManual]);
+
+  useEffect(() => {
+    const temporizador = window.setInterval(() => {
+      const agora = Date.now();
+      setInstanteAtual(agora);
+
+      const dadosAtuais = dadosDashboardRef.current;
+      const dadosRecentes = dadosAtuais
+        ? { ...dadosAtuais, samples: filtrarUltimas24Horas(dadosAtuais.samples, agora) }
+        : null;
+      const snapshotsRecentes = filtrarUltimas24Horas(snapshotsConsultasRef.current, agora);
+      const historicoFoiLimpo = snapshotsRecentes.length !== snapshotsConsultasRef.current.length
+        || (
+          dadosAtuais !== null
+          && dadosRecentes?.samples.length !== dadosAtuais.samples.length
+        );
+
+      if (!historicoFoiLimpo) return;
+
+      if (dadosRecentes) {
+        dadosDashboardRef.current = dadosRecentes;
+        setDadosDashboard(dadosRecentes);
+      }
+      snapshotsConsultasRef.current = snapshotsRecentes;
+      setSnapshotsConsultas(snapshotsRecentes);
+      if (!dadosRecentes) return;
+
+      try {
+        localStorage.setItem(CHAVE_CACHE_DASHBOARD, JSON.stringify({
+          data: dadosRecentes,
+          snapshots: snapshotsRecentes,
+          updatedAt: instanteAtualizacao,
+        } satisfies DashboardCache));
+      } catch {
+        setErro('Não foi possível remover as medições antigas dos dados salvos no navegador.');
+      }
+    }, 60_000);
+
+    return () => window.clearInterval(temporizador);
+  }, [instanteAtualizacao]);
+
+  useEffect(() => {
+    const container = containerGraficoRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      setDimensoesGrafico({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const statusPorAtributo = useMemo<Partial<Record<AtributoId, StatusCor>>>(() => {
     const metricas = dadosDashboard?.latestSampleEvaluation;
@@ -382,11 +504,11 @@ export default function Dashboard() {
   }, [atributoGrafico, statusPorAtributo]);
 
   const dadosGrafico = useMemo(() => {
-    if (instanteAtualizacao === 0) {
+    if (instanteAtualizacao === 0 || instanteAtual === 0) {
       return [];
     }
 
-    const inicioJanela = instanteAtualizacao - JANELA_GRAFICO_MS;
+    const inicioJanela = instanteAtual - JANELA_GRAFICO_MS;
     const avaliacaoMaisRecente = dadosDashboard?.latestSampleEvaluation;
     const timestampAvaliacaoMaisRecente = avaliacaoMaisRecente
       ? interpretarTimestamp(avaliacaoMaisRecente.timestamp).getTime()
@@ -403,12 +525,14 @@ export default function Dashboard() {
     });
     const samples = [...amostrasHistoricas, ...snapshotsConsultas]
       .map((sample) => ({ sample, timestampMs: interpretarTimestamp(sample.timestamp).getTime() }))
-      .filter(({ timestampMs }) => Number.isFinite(timestampMs) && timestampMs >= inicioJanela && timestampMs <= instanteAtualizacao)
+      .filter(({ timestampMs }) => Number.isFinite(timestampMs) && timestampMs >= inicioJanela && timestampMs <= instanteAtual)
       .sort((a, b) => a.timestampMs - b.timestampMs);
 
     if (samples.length === 0) {
       return [];
     }
+
+    const larguraGrafico = calcularLarguraGrafico(samples.length, dimensoesGrafico.width);
 
     return samples.map(({ sample, timestampMs }, index) => {
       const valor = atributoGrafico === 'ph'
@@ -420,13 +544,15 @@ export default function Dashboard() {
             : sample.tds;
       return {
         timestampMs,
-        x: samples.length > 1 ? 40 + (index / (samples.length - 1)) * 500 : 270,
+        x: samples.length > 1
+          ? 40 + (index / (samples.length - 1)) * (larguraGrafico - 80)
+          : larguraGrafico / 2,
         hora: formatadorHora.format(timestampMs),
         dataHora: formatadorDataHora.format(timestampMs),
         valor,
       };
     });
-  }, [atributoGrafico, dadosDashboard, instanteAtualizacao, snapshotsConsultas]);
+  }, [atributoGrafico, dadosDashboard, dimensoesGrafico, instanteAtual, instanteAtualizacao, snapshotsConsultas]);
 
   const { pontosCalculados, pointsSVG } = useMemo(() => {
     if (dadosGrafico.length === 0) {
@@ -441,26 +567,37 @@ export default function Dashboard() {
     const minVal = diff === 0 ? minBase - 1 : minBase - range * 0.3;
     const maxVal = diff === 0 ? maxBase + 1 : maxBase + range * 0.3;
     const deltaY = maxVal - minVal;
+    const topoValores = dimensoesGrafico.height * 0.25;
+    const alturaValores = dimensoesGrafico.height * 0.5;
 
     const pontosCalculados = dadosGrafico.map((d) => {
-      const y = 180 - ((d.valor - minVal) / (deltaY || 1)) * 130;
+      const y = topoValores + (1 - (d.valor - minVal) / (deltaY || 1)) * alturaValores;
       return { ...d, y };
     });
 
     const pointsSVG = pontosCalculados.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
 
     return { pontosCalculados, pointsSVG };
-  }, [dadosGrafico]);
+  }, [dadosGrafico, dimensoesGrafico.height]);
+
+  const larguraGrafico = calcularLarguraGrafico(dadosGrafico.length, dimensoesGrafico.width);
+  const linhaSuperior = dimensoesGrafico.height * 0.18;
+  const linhaCentral = dimensoesGrafico.height * 0.5;
+  const linhaInferior = dimensoesGrafico.height * 0.82;
 
   const botaoConsultar = (
     <button
       type="button"
       className="dashboard-refresh-btn"
-      onClick={() => void carregarDados()}
-      disabled={consultando}
+      onClick={buscarManualmente}
+      disabled={consultando || segundosAteBuscaManual > 0}
     >
       <RefreshCw size={16} className={consultando ? 'animate-spin' : ''} />
-      {consultando ? 'Consultando...' : 'Buscar valores agora'}
+      {consultando
+        ? 'Consultando...'
+        : segundosAteBuscaManual > 0
+          ? `Nova busca em ${segundosAteBuscaManual}s`
+          : 'Buscar valores agora'}
     </button>
   );
 
@@ -478,7 +615,7 @@ export default function Dashboard() {
           <h2>Dashboard</h2>
           <p>
             {erro
-              ?? 'Nenhum valor carregado ainda. A primeira atualização automática ocorrerá em até 15 minutos.'}
+              ?? 'Nenhum valor carregado ainda. A consulta automática será repetida a cada 15 minutos.'}
           </p>
         </div>
         {botaoConsultar}
@@ -487,7 +624,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="dashboard-page flex flex-col gap-6">
       <div className="dashboard-header-bar">
         <div className="dashboard-title-area">
           <h2>Dashboard</h2>
@@ -548,11 +685,14 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="chart-svg-container">
-          <svg viewBox="0 0 580 230" style={{ width: '100%', height: '100%' }}>
-            <line x1="40" y1="40" x2="540" y2="40" stroke="#f1f5f9" strokeWidth="1" />
-            <line x1="40" y1="120" x2="540" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-            <line x1="40" y1="200" x2="540" y2="200" stroke="#e2e8f0" strokeWidth="1" />
+        <div className="chart-svg-container" ref={containerGraficoRef}>
+          <svg
+            viewBox={`0 0 ${larguraGrafico} ${dimensoesGrafico.height}`}
+            style={{ width: `${larguraGrafico}px`, height: '100%' }}
+          >
+            <line x1="40" y1={linhaSuperior} x2={larguraGrafico - 40} y2={linhaSuperior} stroke="#f1f5f9" strokeWidth="1" />
+            <line x1="40" y1={linhaCentral} x2={larguraGrafico - 40} y2={linhaCentral} stroke="#f1f5f9" strokeWidth="1" />
+            <line x1="40" y1={linhaInferior} x2={larguraGrafico - 40} y2={linhaInferior} stroke="#e2e8f0" strokeWidth="1" />
 
             {pointsSVG ? (
               <polyline
@@ -572,7 +712,7 @@ export default function Dashboard() {
                 <text x={p.x} y={p.y - 12} textAnchor="middle" fontSize="11" fontWeight="600" fill="#334155">
                   {formatarValor(p.valor, atributoGrafico === 'ph' ? 1 : 0)}
                 </text>
-                <text x={p.x} y="220" textAnchor="middle" fontSize="12" fill="#64748b">
+                <text x={p.x} y={dimensoesGrafico.height * 0.96} textAnchor="middle" fontSize="12" fill="#64748b">
                   {p.hora}
                 </text>
               </g>
