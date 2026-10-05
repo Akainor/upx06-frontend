@@ -9,9 +9,9 @@ interface DadoComparativo {
 }
 
 const DADOS_COMPARATIVOS: DadoComparativo[] = [
-  { parametro: 'pH', antes: '7.8', depois: '7.2', alturaAntes: '90%', alturaDepois: '83%' },
-  { parametro: 'Turbidez', antes: '7 NTU', depois: '1.2 NTU', alturaAntes: '90%', alturaDepois: '15.4%' },
-  { parametro: 'Temperatura', antes: '25.8°C', depois: '24.5°C', alturaAntes: '90%', alturaDepois: '85.5%' },
+  { parametro: 'pH', antes: '9.8', depois: '7.2', alturaAntes: '90%', alturaDepois: '66.1%' },
+  { parametro: 'Turbidez', antes: '7 NTU', depois: '0.8 NTU', alturaAntes: '90%', alturaDepois: '10.3%' },
+  { parametro: 'Temperatura', antes: '35.8°C', depois: '24.5°C', alturaAntes: '90%', alturaDepois: '61.6%' },
   { parametro: 'TDS', antes: '320 ppm', depois: '210 ppm', alturaAntes: '90%', alturaDepois: '59%' }
 ];
 
