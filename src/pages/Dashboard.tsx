@@ -465,21 +465,25 @@ export default function Dashboard() {
     }
 
     function retomarBuscaAutomatica() {
+      if (document.visibilityState !== 'visible' || buscaAutomaticaEmAndamento) return;
+
       const proximaBuscaPermitida = Math.max(
         proximaBuscaAutomatica,
         ultimaConsultaBemSucedidaRef.current + INTERVALO_ATUALIZACAO_MS,
         lerUltimaConsultaCompartilhada() + INTERVALO_ATUALIZACAO_MS,
       );
-      if (
-        document.visibilityState !== 'visible'
-        || buscaAutomaticaEmAndamento
-        || Date.now() < proximaBuscaPermitida
-      ) {
+
+      window.clearTimeout(temporizador);
+      const esperaRestante = proximaBuscaPermitida - Date.now();
+      if (esperaRestante <= 0) {
+        void buscarAutomaticamente();
         return;
       }
 
-      window.clearTimeout(temporizador);
-      void buscarAutomaticamente();
+      proximaBuscaAutomatica = proximaBuscaPermitida;
+      temporizador = window.setTimeout(() => {
+        void buscarAutomaticamente();
+      }, esperaRestante);
     }
 
     document.addEventListener('visibilitychange', retomarBuscaAutomatica);

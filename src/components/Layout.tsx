@@ -195,13 +195,33 @@ export default function Layout() {
         document.visibilityState !== 'visible'
         || verificacaoEmAndamento
         || proximaVerificacao === 0
-        || Date.now() < proximaVerificacao
       ) {
         return;
       }
 
+      let proximaBuscaPermitida = proximaVerificacao;
+      try {
+        proximaBuscaPermitida = Math.max(
+          proximaBuscaPermitida,
+          getLastDashboardRequestAt() + INTERVALO_MONITORAMENTO_MS,
+        );
+      } catch (error) {
+        setErroMonitoramento(
+          error instanceof Error ? error.message : 'Não foi possível ler o horário da última consulta.',
+        );
+        proximaBuscaPermitida = Math.max(
+          proximaBuscaPermitida,
+          Date.now() + INTERVALO_MONITORAMENTO_MS,
+        );
+      }
+
       window.clearTimeout(temporizador);
-      void verificarAlertas();
+      if (Date.now() >= proximaBuscaPermitida) {
+        void verificarAlertas();
+        return;
+      }
+
+      agendarVerificacao(proximaBuscaPermitida);
     }
 
     document.addEventListener('visibilitychange', retomarVerificacao);
